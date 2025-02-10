@@ -51,3 +51,6 @@ pip install -r requirements.txt
 ## References
 <a id="1">[1]</a> 
 Evangelos Katsoupis, "Development of a cardiovascular disease monitoring system", Diploma Work, School of Electrical and Computer Engineering, Technical University of Crete, Chania, Greece, 2024 https://doi.org/10.26233/heallink.tuc.100510
+
+<a id="2">[2]</a>
+E. Katsoupis, A. Karasmanoglou, M. Zervakis and M. Antonakakis, "Pulsense: An AI-Driven Cardiovascular Monitoring and Arrhythmia Detection System," 2024 IEEE 24th International Conference on Bioinformatics and Bioengineering (BIBE), Kragujevac, Serbia, 2024, pp. 1-8, doi: 10.1109/BIBE63649.2024.10820493

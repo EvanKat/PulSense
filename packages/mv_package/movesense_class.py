@@ -1,30 +1,24 @@
 """
 Module Name: movesense_class.py
 Description: Contains the class of the bleak device and methods to communicate with it.
-Author: Evangelos Katsoupis
-Date: ...
 """
+
 
 #  Imports 
 from bleak import BleakClient 
 from asyncio import Event, Queue  
-from os.path import exists 
-from .util_fun import * 
-
-# TODO: Set up store to file proccess in a better way, such us to store to queue and while storing append to file
-#       - Storing data to file while storing to queue is more resorses eficient
-#       - we can proccess windows of 16 samples each time (;) 
-# TODO: Discuss with Apostolis the format of the file ecg
-# 
-# TODO: Write comments for each class method (https://bleak.readthedocs.io/en/latest/_modules/bleak.html#BleakClient.disconnect)
-# 
+# from os.path import exists 
+from util_fun import * 
+import struct 
+# Evan
+# TODO: Proccess windows of 16 samples each time or more 
 # TODO: Make documentation for the project using sphinx
 
 class BLEClient:
     '''
     The bleak client class (https://bleak.readthedocs.io/en/latest/api/client.html).
 
-    Have the main methods to connecta and disconect from a BLE GATT server and communicating with it.
+    Have the main methods to connect and disconect from a BLE GATT server and communicating with it.
 
     Args: 
         device_address:
@@ -65,12 +59,6 @@ class BLEClient:
         self.queue = Queue()
         self.case = None
         self.hz = None
-        # # File
-        # self.is_stored = False
-        # self.file_object = None
-        # self.file_writer = None
-    
-    # Set/Get methods
 
     def set_device_address(self, device_address : str):
         '''
@@ -165,8 +153,6 @@ class BLEClient:
             return self.battery_level
  
     # I/O methods
-
-
     async def connect(self):
         '''
         Connect to the specified device.
@@ -190,20 +176,7 @@ class BLEClient:
                 raise ValueError("Unsuccessful connection.") 
         except Exception as e:
             raise ConnectionError(f"Failed to connect: {str(e)}")
-
-        # try:
-        #     if self.client:
-        #         await self.client._backend.connect()
-        #         if self.client.is_connected:
-        #             self.is_connected = self.client.is_connected
-        #             return True
-        #         else:
-        #             raise ValueError("Unsuccessful connection.") 
-        #     else:
-        #         raise AttributeError("No client specified.")
-        # except Exception as e:
-        #     return f"connect()_E: {e}"
-
+        
     # Disconnect from a gatt server
     # If successful set is_connected property to False and return True 
     async def disconnect(self):
@@ -360,13 +333,6 @@ class BLEClient:
                     if self.is_notifying:
                         await self.client.stop_notify(NOTIFY_CHARACTERISTIC_UUID)
                         self.is_notifying = False
-                        # # Close file if opend
-                        # if self.file_object:
-                        #     close_csv(self.file_object)
-                        #     self.file_writer = None
-                        #     self.file_object = None
-                        #     # [self.file_writer, self.file_object] = close_csv(self.file_object)
-                        #     self.is_stored = False
                     else:
                         raise ValueError("Not notifying.")    
                 else:
@@ -376,6 +342,15 @@ class BLEClient:
         except Exception as e:
             print(f"stop_notify()_E: {e}")        
     
+    async def empty_queue(self):
+        '''
+        Emptying the asyncio type queue of the class.
+        '''
+        while not self.queue.empty():
+            await self.queue.get()
+    
+    # Nonification handlers for each method
+
     async def _notification_handler(self, sender, data : bytearray):
         '''
         The private notification handler for the responsed data. The given data (byte array) are passed to :func:`_proccess_data` to be decoded.
@@ -416,24 +391,113 @@ class BLEClient:
         # Temperature
         if self.case == TEMP_REQUEST_TYPE:
             if len(data) == 10:
-                formated_data = temp_data_handler(data)
+                formated_data = self._temp_data_handler(data)
         # Heart rate and RR interval
         elif self.case == HR_REQUEST_TYPE:
-            formated_data = hr_data_handler(data)
+            formated_data = self._hr_data_handler(data)
         # ECG 
         elif self.case == ECG_REQUEST_TYPE:
-            formated_data = ecg_data_handler(data)
+            formated_data = self._ecg_data_handler(data)
         # MAGI format
         else:
-            formated_data = magi_data_handler(data)
+            formated_data = self._magi_data_handler(data)
         
         return formated_data
+    
+    def _magi_data_handler(data : bytearray):
+        '''
+        Takes a byte array and reads its length. The lenght will be a multiple of 3 plus 6.
+        Bytes 2:6 is the timestamp and for the bytes 6:end, eatch data will in a group of four
+        The MagnAccGyroImuxx (MAGI) handler is used by the notification handler and returns data 
+        to [timestamp, xn, yn, zn] format   
+
+        Args:
+            data: Bytearray to unpack
         
-    async def empty_queue(self):
+        Returns:
+            list: A list with the timestump and xn,yn,zn data
+
+        Examples:
+            >>> $ Data length of 18 
+            >>> magi_data_handler(data)
+            (123, 1.25, 12.4, -2.01)
         '''
-        Emptying the asyncio type queue of the class.
+        timestamp = struct.unpack('<I', data[2:6])[0]
+        x = [timestamp]
+        # To access its x,y,z for each sample
+        for index in range( int( (len(data) - 6) / 4) ):
+            start = index * 4 + 6
+            end = index * 4 + 10
+            x.append(struct.unpack('<f', data[start:end])[0])  
+        return x
+
+    def _ecg_data_handler(data : bytearray):
         '''
-        while not self.queue.empty():
-            await self.queue.get()
+        Unpack a bytearray to timestamp (bytes 2:6) and to 16 samples of 4 bytes (bytes 6:70)
+        Bytes 2:6 is the timestamp and for the bytes 6:end, eatch data will in a group of four. 
+        Each sample is multiplied by the VOLTS_PER_LSB constant (~= 3.81e-7) to represent a real value. 
+        The ElectroCardioGram (ECG) handler is used by the notification handler and returns data 
+        to [timestamp, s1, ..., s16] format.
+
+        Args:
+            data: Bytearray to unpack
+        
+        Returns:
+            list: A list with the timestump (uint milisecond) and s1, ..., s16 data (float number)
+
+        Examples: 
+            >>> ecg_data_handler(data)
+            (123, s1, ..., s16)
+        '''
+        timestamp = struct.unpack('<I', data[2:6])[0]
+        x = [timestamp]
+        # To access its x,y,z for each sample
+        for index in range(16):
+            sample = VOLTS_PER_LSB * struct.unpack('<i', data[(index*4 + 6):(index*4 + 10)])[0]
+            x.append(sample)
+        return x
+
+    def _hr_data_handler(data : bytearray):
+        '''
+        Unpack a bytearray to average beat rate (bytes 2:6) and to interval between beats rates (RR-interval)
+        (bytes 6:8). Average is a float number and RR is an uint number 
+        The Heart Rate (ECG) handler is used by the notification handler and returns data 
+        to [beat_rate, interval] format.
+
+        Args:
+            data: Bytearray to unpack
+        
+        Returns:
+            list: A list with the average beat_rate(float number), and interval (uint milisecond)
+
+        Examples: 
+            >>> hr_data_handler(data)
+            [75.2 ,  798]
+        '''
+
+        heart_rate = struct.unpack('<f', data[2:6])[0]
+        RR_interval = struct.unpack('<H', data[6:8])[0]
+        return [heart_rate, RR_interval]
+
+    def _temp_data_handler(data : bytearray):
+        '''
+        Unpack a bytearray to timestamp (bytes 2:6) and to internal devise temperature (bytes 6:10).
+        Timestamp is a uint number and temperature is float. 
+        The TEMPerature (TEMP) handler is used by the notification handler and returns data 
+        to [timestamp, temp] format.
+
+        Args:
+            data: Bytearray to unpack
+        
+        Returns:
+            list: A list with the timestamp (uint number), and temerature (float number) in kelvin
+
+        Examples: 
+            >>> temp_data_handler(data)
+            [1225 ,  300]
+        '''
+        timestamp = struct.unpack('<I', data[6:10])[0]
+        temp = struct.unpack('<f', data[2:6])[0] 
+        return [timestamp, temp]
 
 

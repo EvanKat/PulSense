@@ -600,7 +600,7 @@ def display_queue_size(n_intervals, max_intervals):
         #                 )
         
         current_data = current_conection.loop.run_until_complete(
-                                mv_util_fun.get_data_from_queue(mv_blk.queue)
+                                mv_util_fun.ecg_from_queue(mv_blk.queue)
                         )
 
         

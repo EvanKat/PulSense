@@ -596,7 +596,7 @@ def display_queue_size(n_intervals, max_intervals):
     if n_intervals > 0:
        
         # current_data =  current_conection.loop.run_until_complete(
-        #                     hl.generate_sawtooth(x, y)
+        #                     hl.generate_sawtooth()
         #                 )
         
         current_data = current_conection.loop.run_until_complete(
